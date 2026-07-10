@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import declarative_base
 
 # PostgreSQL async connection URL (points to our Docker container)
-DATABASE_URL = "postgresql+psycopg://user:password@localhost:5433/product_db"
+DATABASE_URL = "postgresql+psycopg://postgres:password123@localhost:5433/product_db"
 
 # Create the async engine
 engine = create_async_engine(DATABASE_URL, echo=True)
