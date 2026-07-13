@@ -18,39 +18,42 @@ class OrderRepository:
         items_data: List[dict]
     ) -> OrderDB:
         """
-        Saves an order and all of its items inside a single database transaction.
+        Saves an order and all its items safely, keeping relationships loaded in-memory.
         """
-        # 1. Create and add the parent Order row
+        # 1. Create the parent Order object (without adding to session yet)
         db_order = OrderDB(
             customer_email=customer_email,
             total_amount=total_amount,
             tx_ref=tx_ref,
             status="PENDING"
         )
-        self.db_session.add(db_order)
-        # Flush pushes the order to PostgreSQL to generate db_order.id
-        await self.db_session.flush()
 
-        # 2. Iterate through items, attach the order ID, and save them
+        # 2. Append children directly to the parent's 'items' relationship in-memory
         for item in items_data:
             db_item = OrderItemDB(
-                order_id=db_order.id,
                 product_id=item["product_id"],
                 quantity=item["quantity"],
                 unit_price=item["unit_price"]
+                # Notice: We DO NOT set 'order_id' manually. 
+                # SQLAlchemy handles this when we append to db_order.items!
             )
-            self.db_session.add(db_item)
+            db_order.items.append(db_item)
 
+        # 3. Adding the parent automatically adds all appended children in one batch
+        self.db_session.add(db_order)
+        
+        # 4. Flush once to save everything and generate the IDs
         await self.db_session.flush()
+        
         return db_order
 
     async def get_by_id(self, order_id: int) -> Optional[OrderDB]:
         """
-        Queries an order and automatically pre-loads its child order items.
+        Queries an order and pre-loads its child items.
         """
         query = (
             select(OrderDB)
-            .options(selectinload(OrderDB.items))  # Preloads the related items
+            .options(selectinload(OrderDB.items))
             .where(OrderDB.id == order_id)
         )
         result = await self.db_session.execute(query)
