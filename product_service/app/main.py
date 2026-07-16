@@ -1,29 +1,45 @@
 # product_service/app/main.py
+import threading
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from app.infrastructure.db.config import engine, Base
 from app.infrastructure.api.routes import router as product_router
+from app.infrastructure.messaging.consumer import RabbitMQConsumer
 
 
-# 1. Database Table Initialization via Lifespan Events
+# Helper function to initialize and run our blocking consumer
+def start_rabbitmq_consumer():
+    """
+    Instantiates and starts our RabbitMQ message listener.
+    """
+    try:
+        consumer = RabbitMQConsumer()
+        print("[*] Starting RabbitMQ Background Consumer...")
+        consumer.start_consuming()
+    except Exception as e:
+        print(f"[!] Failed to start background consumer: {str(e)}")
+
+
+# Database Table & Consumer Initialization via Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handles startup and shutdown events for the application.
-    When the app starts, we automatically create our PostgreSQL tables.
-    """
+    # 1. Create DB tables on startup
     async with engine.begin() as conn:
-        # Runs SQLAlchemy Base.metadata.create_all in an async thread
         await conn.run_sync(Base.metadata.create_all)
     
-    yield  # The application runs while paused here
+    # 2. Launch the RabbitMQ Consumer in a separate background thread
+    # Setting daemon=True ensures the thread terminates automatically when the app stops
+    consumer_thread = threading.Thread(target=start_rabbitmq_consumer, daemon=True)
+    consumer_thread.start()
+
+    yield  # The web server runs here
     
-    # Shutdown tasks (e.g., closing database connection pools) go here
+    # Clean up connection pools on shutdown
     await engine.dispose()
 
 
-# 2. Initialize the FastAPI Application
+# Initialize the FastAPI App
 app = FastAPI(
     title="Product Service",
     description="Microservice for managing product catalogs and inventory",
@@ -31,15 +47,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-# 3. Include our Clean Architecture API routes
 app.include_router(product_router)
 
-
-# 4. Global Health Check Endpoint
 @app.get("/", tags=["Health"])
 async def health_check():
-    """
-    A simple health check endpoint to verify the service is running.
-    """
     return {"status": "healthy", "service": "product-service"}
