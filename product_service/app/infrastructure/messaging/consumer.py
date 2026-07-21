@@ -19,44 +19,50 @@ class RabbitMQConsumer:
         """
         Connects to RabbitMQ, binds the queue, and starts listening for events.
         """
-        # 1. Establish connection and channel
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(host=self.host, port=self.port)
         )
         channel = connection.channel()
 
-        # 2. Declare the exchange (must match the publisher exactly)
         channel.exchange_declare(
             exchange=self.exchange_name, 
             exchange_type="direct", 
             durable=True
         )
 
-        # 3. Declare our specific queue
         channel.queue_declare(queue=self.queue_name, durable=True)
 
-        # 4. Bind the queue to the exchange for 'order.paid' events
-        channel.queue_bind(
-            exchange=self.exchange_name, 
-            queue=self.queue_name, 
-            routing_key="order.paid"
-        )
+        # Bind our queue to TWO different routing keys
+        channel.queue_bind(exchange=self.exchange_name, queue=self.queue_name, routing_key="order.paid")
+        channel.queue_bind(exchange=self.exchange_name, queue=self.queue_name, routing_key="order.failed")
 
-        # 5. Define what to do when a message arrives
         def callback(ch, method, properties, body):
             event_data = json.loads(body)
-            # Use asyncio to run our asynchronous database update in the main event loop
-            asyncio.run(self.update_inventory(event_data))
-            # Send acknowledgement back to RabbitMQ that the message was processed safely
+            routing_key = method.routing_key  # "order.paid" or "order.failed"
+            
+            # Pass the routing key to 'process_event'
+            asyncio.run(self.process_event(routing_key, event_data))
+            
+            # Send acknowledgement back to RabbitMQ
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
-        # 6. Start the infinite consumer loop
+        # Start the infinite consumer loop
         channel.basic_consume(queue=self.queue_name, on_message_callback=callback)
         channel.start_consuming()
 
-    async def update_inventory(self, event_data: dict):
+    async def process_event(self, routing_key: str, event_data: dict):
         """
-        Asynchronously decrements product stock in PostgreSQL.
+        Determines whether to reduce inventory or restore it based on the event routing key.
+        """
+        if routing_key == "order.paid":
+            await self.update_inventory(event_data, decrement=True)
+        elif routing_key == "order.failed":
+            await self.update_inventory(event_data, decrement=False)
+
+    async def update_inventory(self, event_data: dict, decrement: bool):
+        """
+        Asynchronously updates PostgreSQL stock.
+        If decrement is True, stock goes down. If False (Saga Rollback), stock goes up.
         """
         async with async_session() as session:
             try:
@@ -64,17 +70,23 @@ class RabbitMQConsumer:
                     product_id = item["product_id"]
                     quantity = item["quantity"]
 
-                    # Query the product
                     query = select(ProductDB).where(ProductDB.id == product_id)
                     result = await session.execute(query)
                     product = result.scalar_one_or_none()
 
                     if product:
-                        # Decrement stock (ensuring it doesn't go below 0)
-                        product.stock = max(0, product.stock - quantity)
+                        if decrement:
+                            # Added int() cast and # type: ignore to satisfy Pylance
+                            product.stock = max(0, int(product.stock) - quantity)  # type: ignore
+                            action = "decremented"
+                        else:
+                            # Saga compensating transaction: Restore the inventory!
+                            # Added int() cast and # type: ignore to satisfy Pylance
+                            product.stock = int(product.stock) + quantity  # type: ignore
+                            action = "restored"
                 
                 await session.commit()
-                print(f"[x] Inventory updated successfully for event: {event_data.get('tx_ref')}")
+                print(f"[x] Inventory {action} successfully for event: {event_data.get('tx_ref')}")
             except Exception as e:
                 await session.rollback()
                 print(f"[!] Failed to update inventory: {str(e)}")
