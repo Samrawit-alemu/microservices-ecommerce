@@ -9,7 +9,7 @@ from app.infrastructure.db.config import async_session
 from app.infrastructure.db.models import ProductDB
 
 class RabbitMQConsumer:
-    def __init__(self, host: str = "localhost", port: int = 5672):
+    def __init__(self, host: str = "127.0.0.1", port: int = 5672):
         self.host = host
         self.port = port
         self.exchange_name = "order_exchange"
