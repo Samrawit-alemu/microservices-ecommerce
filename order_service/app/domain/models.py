@@ -25,3 +25,7 @@ class Order(BaseModel):
     items: List[OrderItem]
 
     model_config = ConfigDict(from_attributes=True)
+
+class OrderResponse(BaseModel):
+    order: Order
+    payment_url: str

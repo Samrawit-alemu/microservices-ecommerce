@@ -58,3 +58,22 @@ class OrderRepository:
         )
         result = await self.db_session.execute(query)
         return result.scalar_one_or_none()
+    
+    async def get_by_tx_ref(self, tx_ref: str) -> Optional[OrderDB]:
+        """
+        Queries an order using its unique Chapa transaction reference.
+        """
+        query = select(OrderDB).options(selectinload(OrderDB.items)).where(OrderDB.tx_ref == tx_ref)
+        result = await self.db_session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def update_status(self, order_id: int, status: str) -> OrderDB:
+        """
+        Updates the status of an order (e.g., 'PENDING' -> 'PAID').
+        """
+        query = select(OrderDB).where(OrderDB.id == order_id)
+        result = await self.db_session.execute(query)
+        db_order = result.scalar_one()
+        db_order.status = status
+        await self.db_session.flush()
+        return db_order
