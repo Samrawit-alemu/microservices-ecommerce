@@ -11,3 +11,8 @@ __pycache__/
 # IDE configurations
 .vscode/
 .idea/
+
+# Node dependencies (Frontend)
+node_modules/
+dist/
+.eslintcache
