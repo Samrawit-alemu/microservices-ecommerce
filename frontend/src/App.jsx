@@ -14,8 +14,8 @@ export default function App() {
   const [queriedOrder, setQueriedOrder] = useState(null);
   const [queryError, setQueryError] = useState("");
 
-  const PRODUCT_API = "http://127.0.0.1:8001/products";
-  const ORDER_API = "http://127.0.0.1:8002/orders";
+  const PRODUCT_API = "https://product-service-y2y8.onrender.com/products";
+  const ORDER_API = "https://order-service-3i4u.onrender.com/orders";
 
   // --- 2. FETCH PRODUCT CATALOG ON LOAD ---
   useEffect(() => {
