@@ -1,8 +1,7 @@
 # order_service/app/infrastructure/api/routes.py
 import os
-
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request  # Added Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
@@ -17,17 +16,16 @@ from app.use_cases.manage_orders import OrderUseCases
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
-# 1. Dependency Injection wiring helper
 def get_order_use_cases(db: AsyncSession = Depends(get_db)) -> OrderUseCases:
     repo = OrderRepository(db)
     
-    # Read the live Product Service live cloud URL if deployed, otherwise fallback to local
     product_service_url = os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8001")
     product_client = ProductClient(base_url=product_service_url)
     
-    # Read Chapa secret key from server environment
     chapa_secret_key = os.getenv("CHAPA_SECRET_KEY")
-    chapa_client = ChapaClient(secret_key=chapa_secret_key)
+    # Read the order service's own URL from the cloud environment
+    order_service_url = os.getenv("ORDER_SERVICE_URL", "http://localhost:8002")
+    chapa_client = ChapaClient(secret_key=chapa_secret_key, order_service_url=order_service_url)
     
     publisher = RabbitMQPublisher()
     return OrderUseCases(repo, product_client, chapa_client, publisher)
@@ -41,11 +39,11 @@ async def create_order(
     """
     Endpoint to process checkout and return order + payment link.
     """
-    # Replace this with your public Ngrok URL when testing live Chapa webhooks
-    ngrok_url = "http://localhost:8002/orders/webhook/chapa"
+    order_service_url = os.getenv("ORDER_SERVICE_URL", "http://localhost:8002")
+    callback_url = f"{order_service_url}/orders/webhook/chapa"
     
     try:
-        return await use_cases.create_order(order_data, callback_url=ngrok_url)
+        return await use_cases.create_order(order_data, callback_url=callback_url)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
@@ -57,9 +55,6 @@ async def chapa_webhook(
     payload: dict,
     use_cases: OrderUseCases = Depends(get_order_use_cases)
 ):
-    """
-    Webhook endpoint called asynchronously by Chapa (or our mock) on payment success.
-    """
     tx_ref = payload.get("tx_ref")
     status_field = payload.get("status")
 
@@ -74,16 +69,18 @@ async def chapa_webhook(
 
 
 @router.get("/mock-payment-success", response_class=HTMLResponse)
-async def mock_payment_success(tx_ref: str):
+async def mock_payment_success(request: Request, tx_ref: str):  # Added request: Request
     """
-    Simulated landing page that automatically triggers our Chapa webhook locally.
-    This provides a self-contained environment to demonstrate the full workflow.
+    Simulated landing page that dynamically calls its own webhook.
     """
-    # Simulate Chapa's webhook POST request internally
+    # Automatically extracts the base URL (whether local or cloud)
+    base_url = str(request.base_url).rstrip("/")
     webhook_payload = {"tx_ref": tx_ref, "status": "success"}
+    
     async with httpx.AsyncClient() as client:
         try:
-            await client.post("http://localhost:8002/orders/webhook/chapa", json=webhook_payload)
+            # Calls the webhook using the dynamic cloud URL
+            await client.post(f"{base_url}/orders/webhook/chapa", json=webhook_payload)
             success = True
         except Exception:
             success = False
