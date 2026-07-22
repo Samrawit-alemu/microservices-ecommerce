@@ -1,4 +1,6 @@
 # order_service/app/infrastructure/api/routes.py
+import os
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
@@ -18,9 +20,16 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 # 1. Dependency Injection wiring helper
 def get_order_use_cases(db: AsyncSession = Depends(get_db)) -> OrderUseCases:
     repo = OrderRepository(db)
-    product_client = ProductClient()
-    chapa_client = ChapaClient()  # Instantiates Chapa client
-    publisher = RabbitMQPublisher()  # Instantiates RabbitMQ Publisher
+    
+    # Read the live Product Service live cloud URL if deployed, otherwise fallback to local
+    product_service_url = os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8001")
+    product_client = ProductClient(base_url=product_service_url)
+    
+    # Read Chapa secret key from server environment
+    chapa_secret_key = os.getenv("CHAPA_SECRET_KEY")
+    chapa_client = ChapaClient(secret_key=chapa_secret_key)
+    
+    publisher = RabbitMQPublisher()
     return OrderUseCases(repo, product_client, chapa_client, publisher)
 
 

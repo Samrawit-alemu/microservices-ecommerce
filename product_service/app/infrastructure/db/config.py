@@ -1,9 +1,20 @@
 # product_service/app/infrastructure/db/config.py
+import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 
-# PostgreSQL async connection URL (points to our Docker container)
-DATABASE_URL = "postgresql+psycopg://postgres:password123@localhost:5433/product_db"
+# If 'DATABASE_URL' is set on the cloud server, use it. Otherwise, fallback to your working local database.
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql+psycopg://postgres:password123@localhost:5433/product_db"
+)
+
+# Convert standard postgres:// URLs (used by cloud providers) to our psycopg async format
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+...
 
 # Create the async engine
 engine = create_async_engine(DATABASE_URL, echo=True)

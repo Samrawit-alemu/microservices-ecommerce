@@ -1,5 +1,5 @@
 # product_service/app/infrastructure/messaging/consumer.py
-import pika
+import pika, os
 import json
 import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,32 +9,17 @@ from app.infrastructure.db.config import async_session
 from app.infrastructure.db.models import ProductDB
 
 class RabbitMQConsumer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 5672):
-        self.host = host
-        self.port = port
+    def __init__(self):
+        # If 'RABBITMQ_URL' is set by CloudAMQP, use it. Otherwise, fallback to local IPv4.
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672//")
         self.exchange_name = "order_exchange"
         self.queue_name = "product_inventory_queue"
 
     def start_consuming(self):
-        """
-        Connects to RabbitMQ, binds the queue, and starts listening for events.
-        """
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host=self.host, port=self.port)
-        )
+        # Establish connection using the URL parameter
+        parameters = pika.URLParameters(self.rabbitmq_url)
+        connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
-
-        channel.exchange_declare(
-            exchange=self.exchange_name, 
-            exchange_type="direct", 
-            durable=True
-        )
-
-        channel.queue_declare(queue=self.queue_name, durable=True)
-
-        # Bind our queue to TWO different routing keys
-        channel.queue_bind(exchange=self.exchange_name, queue=self.queue_name, routing_key="order.paid")
-        channel.queue_bind(exchange=self.exchange_name, queue=self.queue_name, routing_key="order.failed")
 
         def callback(ch, method, properties, body):
             event_data = json.loads(body)
