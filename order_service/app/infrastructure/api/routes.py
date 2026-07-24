@@ -1,54 +1,122 @@
 # order_service/app/infrastructure/api/routes.py
 import os
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, Request  # Added Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
+from fastapi.security import OAuth2PasswordBearer  # Added import
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
-from app.domain.models import Order as OrderDomain, OrderCreate, OrderResponse
+from app.domain.models import Order as OrderDomain, OrderCreate, OrderResponse, UserRegister, UserLogin, UserResponse, TokenResponse
 from app.infrastructure.db.config import get_db
 from app.infrastructure.repositories.order_repo import OrderRepository
+from app.infrastructure.repositories.user_repo import UserRepository
 from app.infrastructure.external_services.product_client import ProductClient
 from app.infrastructure.external_services.chapa_client import ChapaClient
 from app.infrastructure.messaging.publisher import RabbitMQPublisher
+from app.infrastructure.security.auth_handler import AuthHandler
 from app.use_cases.manage_orders import OrderUseCases
+from app.use_cases.manage_users import UserUseCases
+from app.infrastructure.db.models import UserDB
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
+# 1. Initialize FastAPI's security Bearer schema
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="orders/auth/login")
+
+
+# --- DEPENDENCIES ---
+
 def get_order_use_cases(db: AsyncSession = Depends(get_db)) -> OrderUseCases:
     repo = OrderRepository(db)
-    
-    product_service_url = os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8001")
-    product_client = ProductClient(base_url=product_service_url)
-    
-    chapa_secret_key = os.getenv("CHAPA_SECRET_KEY")
-    # Read the order service's own URL from the cloud environment
-    order_service_url = os.getenv("ORDER_SERVICE_URL", "http://localhost:8002")
-    chapa_client = ChapaClient(secret_key=chapa_secret_key, order_service_url=order_service_url)
-    
+    product_client = ProductClient(base_url=os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8001"))
+    chapa_client = ChapaClient(secret_key=os.getenv("CHAPA_SECRET_KEY"), order_service_url=os.getenv("ORDER_SERVICE_URL", "http://localhost:8002"))
     publisher = RabbitMQPublisher()
     return OrderUseCases(repo, product_client, chapa_client, publisher)
 
+def get_user_use_cases(db: AsyncSession = Depends(get_db)) -> UserUseCases:
+    repo = UserRepository(db)
+    return UserUseCases(repo)
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> UserDB:
+    """
+    FastAPI security dependency. Extracts the JWT token, verifies its signature,
+    and injects the authenticated User database model into protected endpoints.
+    """
+    user_id = AuthHandler.decode_access_token(token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    repo = UserRepository(db)
+    user = await repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user no longer exists",
+        )
+    return user
+
+
+# --- AUTH ENDPOINTS ---
+
+@router.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    user_data: UserRegister,
+    use_cases: UserUseCases = Depends(get_user_use_cases)
+):
+    try:
+        return await use_cases.register_user(user_data.email, user_data.password)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.post("/auth/login", response_model=TokenResponse)
+async def login(
+    credentials: UserLogin,
+    use_cases: UserUseCases = Depends(get_user_use_cases)
+):
+    try:
+        token = await use_cases.login_user(credentials.email, credentials.password)
+        return {"access_token": token, "token_type": "bearer"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+
+# --- SECURED ORDER ENDPOINTS ---
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     order_data: OrderCreate,
+    current_user: UserDB = Depends(get_current_user),  # Protected by JWT authentication
     use_cases: OrderUseCases = Depends(get_order_use_cases)
 ):
     """
-    Endpoint to process checkout and return order + payment link.
+    Creates an order linked securely to the authenticated User.
     """
     order_service_url = os.getenv("ORDER_SERVICE_URL", "http://localhost:8002")
     callback_url = f"{order_service_url}/orders/webhook/chapa"
     
     try:
-        return await use_cases.create_order(order_data, callback_url=callback_url)
+        # Pass the verified user's ID and Email securely fetched from the database
+        return await use_cases.create_order(
+            order_data, 
+            user_id=int(current_user.id),  # type: ignore
+            email=str(current_user.email), 
+            callback_url=callback_url
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
 
+
+# --- WEBHOOKS & UTILITIES ---
 
 @router.post("/webhook/chapa", status_code=status.HTTP_200_OK)
 async def chapa_webhook(
@@ -69,17 +137,11 @@ async def chapa_webhook(
 
 
 @router.get("/mock-payment-success", response_class=HTMLResponse)
-async def mock_payment_success(request: Request, tx_ref: str):  # Added request: Request
-    """
-    Simulated landing page that dynamically calls its own webhook.
-    """
-    # Automatically extracts the base URL (whether local or cloud)
+async def mock_payment_success(request: Request, tx_ref: str):
     base_url = str(request.base_url).rstrip("/")
     webhook_payload = {"tx_ref": tx_ref, "status": "success"}
-    
     async with httpx.AsyncClient() as client:
         try:
-            # Calls the webhook using the dynamic cloud URL
             await client.post(f"{base_url}/orders/webhook/chapa", json=webhook_payload)
             success = True
         except Exception:

@@ -12,13 +12,16 @@ class OrderRepository:
 
     async def create_order(
         self, 
-        customer_email: str, 
+        user_id: int,  # Changed from customer_email to user_id
         total_amount: Decimal, 
         tx_ref: str, 
         items_data: List[dict]
     ) -> OrderDB:
+        """
+        Saves an order linked securely to a User ID.
+        """
         db_order = OrderDB(
-            customer_email=customer_email,
+            user_id=user_id, # Link directly to the User ID
             total_amount=total_amount,
             tx_ref=tx_ref,
             status="PENDING"
@@ -54,7 +57,6 @@ class OrderRepository:
         query = select(OrderDB).where(OrderDB.id == order_id)
         result = await self.db_session.execute(query)
         db_order = result.scalar_one()
-        # Added # type: ignore to prevent Pylance warning about Column vs Str assignment
         db_order.status = status  # type: ignore
         await self.db_session.flush()
         return db_order

@@ -23,7 +23,10 @@ class OrderUseCases:
         self.chapa_client = chapa_client
         self.publisher = publisher
 
-    async def create_order(self, order_data: OrderCreate, callback_url: str) -> dict:
+    async def create_order(self, order_data: OrderCreate, user_id: int, email: str, callback_url: str) -> dict:
+        """
+        Validates stock, creates an order linked to a User ID, and initializes a payment link.
+        """
         total_amount = Decimal("0.00")
         tx_ref = f"chapa-tx-{uuid.uuid4().hex[:8]}"
         prepared_items = []
@@ -48,17 +51,18 @@ class OrderUseCases:
                 "unit_price": product.price
             })
 
+        # Save order to DB with 'PENDING' status linked to the logged-in User ID
         db_order = await self.order_repo.create_order(
-            customer_email=order_data.customer_email,
+            user_id=user_id,
             total_amount=total_amount,
             tx_ref=tx_ref,
             items_data=prepared_items
         )
 
-        # Added Decimal() cast to satisfy Pylance
+        # Initialize payment link using the user's secure database email
         payment_url = await self.chapa_client.initialize_payment(
             amount=Decimal(db_order.total_amount), # type: ignore
-            email=str(db_order.customer_email),
+            email=email,
             tx_ref=str(db_order.tx_ref),
             callback_url=callback_url
         )
@@ -73,7 +77,6 @@ class OrderUseCases:
         if not order:
             raise ValueError(f"Order with reference {tx_ref} not found")
 
-        # Added int() cast to satisfy Pylance
         updated_order = await self.order_repo.update_status(int(order.id), "PAID") # type: ignore
 
         event_payload = {
