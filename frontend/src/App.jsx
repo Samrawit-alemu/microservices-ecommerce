@@ -5,22 +5,34 @@ export default function App() {
   // --- 1. STATE MANAGEMENT ---
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
-  const [customerEmail, setCustomerEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [orderResponse, setOrderResponse] = useState(null);
+
+  // Authentication State
+  const [token, setToken] = useState(localStorage.getItem("token") || "");
+  const [currentUserEmail, setCurrentUserEmail] = useState(
+    localStorage.getItem("email") || "",
+  );
+  const [isRegistering, setIsRegistering] = useState(false); // Toggle Login vs Register UI
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
 
   // State for querying old orders
   const [queryOrderId, setQueryOrderId] = useState("");
   const [queriedOrder, setQueriedOrder] = useState(null);
   const [queryError, setQueryError] = useState("");
 
-  const PRODUCT_API = "https://product-service-y2y8.onrender.com/products";
-  const ORDER_API = "https://order-service-3i4u.onrender.com/orders";
+  const PRODUCT_API = "https://product-service-y2y8.onrender.com/products"; // Replace with your live product-service URL
+  const ORDER_API = "https://order-service-3i4u.onrender.com/orders"; // Replace with your live order-service URL
 
   // --- 2. FETCH PRODUCT CATALOG ON LOAD ---
   useEffect(() => {
-    fetchProducts();
-  }, []);
+    if (token) {
+      fetchProducts();
+    }
+  }, [token]);
 
   const fetchProducts = async () => {
     try {
@@ -34,7 +46,66 @@ export default function App() {
     }
   };
 
-  // --- 3. INTERACTIVE CART OPERATIONS ---
+  // --- 3. AUTHENTICATION OPERATIONS ---
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthSuccess("");
+    setLoading(true);
+
+    const endpoint = isRegistering ? "auth/register" : "auth/login";
+    const payload = { email: authEmail, password: authPassword };
+
+    try {
+      const res = await fetch(`${ORDER_API}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        if (isRegistering) {
+          setAuthSuccess("Registration successful! You can now log in.");
+          setIsRegistering(false);
+          setAuthPassword("");
+        } else {
+          // Login Success: Save JWT token and email to browser storage
+          localStorage.setItem("token", data.access_token);
+          localStorage.setItem("email", authEmail);
+          setToken(data.access_token);
+          setCurrentUserEmail(authEmail);
+
+          // Clear inputs
+          setAuthEmail("");
+          setAuthPassword("");
+        }
+      } else {
+        setAuthError(
+          data.detail || "Authentication failed. Check your inputs.",
+        );
+      }
+    } catch (err) {
+      setAuthError(
+        "Network error. Verify your Order Service is running on Render.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("email");
+    setToken("");
+    setCurrentUserEmail("");
+    setCart([]);
+    setProducts([]);
+    setQueriedOrder(null);
+  };
+
+  // --- 4. INTERACTIVE CART OPERATIONS ---
   const addToCart = (product) => {
     setCart((prevCart) => {
       const existing = prevCart.find((item) => item.id === product.id);
@@ -63,18 +134,13 @@ export default function App() {
       .toFixed(2);
   };
 
-  // --- 4. SECURE CHECKOUT & REDIRECT ---
+  // --- 5. SECURE CHECKOUT (WITH BEARER TOKEN) ---
   const handleCheckout = async (e) => {
     e.preventDefault();
-    if (!customerEmail) {
-      alert("Please enter your email to proceed.");
-      return;
-    }
     setLoading(true);
 
-    // Format the payload to match our OrderCreate Pydantic model
     const payload = {
-      customer_email: customerEmail,
+      customer_email: currentUserEmail, // Handled automatically by token, but kept for schema alignment
       items: cart.map((item) => ({
         product_id: item.id,
         quantity: item.quantity,
@@ -84,32 +150,33 @@ export default function App() {
     try {
       const res = await fetch(`${ORDER_API}/`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        json: true,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`, // Injecting our secure JWT Bearer token
+        },
         body: JSON.stringify(payload),
       });
 
       if (res.ok) {
-        const data = await res.json(); // Returns OrderResponse (order details + payment_url)
+        const data = await res.json();
         setOrderResponse(data);
-        setCart([]); // Clear the cart
-
-        // Open the secure Chapa/Mock payment URL in a new browser tab
+        setCart([]);
         window.open(data.payment_url, "_blank");
       } else {
         const errData = await res.json();
-        alert(`Checkout Failed: ${errData.detail || "Unknown error"}`);
+        alert(
+          `Checkout Failed: ${errData.detail || "Unauthorized. Please log in again."}`,
+        );
+        if (res.status === 401) handleLogout();
       }
     } catch (err) {
-      alert(
-        "Network error during checkout. Is the Order Service running on port 8002?",
-      );
+      alert("Network error during checkout. Verify your services are running.");
     } finally {
       setLoading(false);
     }
   };
 
-  // --- 5. LIVE ORDER STATUS TRACKER ---
+  // --- 6. LIVE ORDER TRACKER ---
   const handleQueryOrder = async (e) => {
     e.preventDefault();
     setQueryError("");
@@ -125,9 +192,7 @@ export default function App() {
         setQueryError(`Order ID ${queryOrderId} not found.`);
       }
     } catch (err) {
-      setQueryError(
-        "Failed to fetch order. Verify the Order Service is running.",
-      );
+      setQueryError("Failed to fetch order. Verify your services are running.");
     }
   };
 
@@ -146,7 +211,101 @@ export default function App() {
     );
   };
 
-  // --- 6. VISUAL RENDERING (THE DASHBOARD) ---
+  // --- 7. RENDERING LOGIC (CONDITIONAL ROUTING) ---
+
+  // If the user is NOT logged in, show the login/register card
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-8 shadow-sm space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-xl mx-auto shadow-md shadow-indigo-100">
+              S
+            </div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight">
+              {isRegistering ? "Create your Account" : "Sign in to Storefront"}
+            </h2>
+            <p className="text-sm text-slate-500">
+              {isRegistering
+                ? "Join our secure microservices demo"
+                : "Enter credentials to access catalog"}
+            </p>
+          </div>
+
+          {authError && (
+            <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 text-sm rounded-xl font-semibold">
+              {authError}
+            </div>
+          )}
+
+          {authSuccess && (
+            <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm rounded-xl font-semibold">
+              {authSuccess}
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Email
+              </label>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="name@email.com"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Password
+              </label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-indigo-100"
+            >
+              {loading
+                ? "Processing..."
+                : isRegistering
+                  ? "Register Account"
+                  : "Sign In"}
+            </button>
+          </form>
+
+          <div className="text-center pt-2">
+            <button
+              onClick={() => {
+                setIsRegistering(!isRegistering);
+                setAuthError("");
+                setAuthSuccess("");
+              }}
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+            >
+              {isRegistering
+                ? "Already have an account? Sign In"
+                : "Don't have an account? Register Now"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If the user IS logged in, render the main storefront dashboard
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
@@ -157,11 +316,26 @@ export default function App() {
               S
             </div>
             <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-              SamStore
+              PortfolioStore
             </h1>
           </div>
-          <div className="text-sm font-medium text-slate-500">
-            FastAPI & RabbitMQ Microservices Demo
+
+          {/* User Status and Logout */}
+          <div className="flex items-center gap-4">
+            <div className="text-right hidden sm:block">
+              <p className="text-xs font-semibold text-slate-400">
+                Authenticated as
+              </p>
+              <p className="text-sm font-bold text-slate-700">
+                {currentUserEmail}
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
+            >
+              Sign Out
+            </button>
           </div>
         </div>
       </header>
@@ -205,7 +379,7 @@ export default function App() {
                   <button
                     onClick={() => addToCart(product)}
                     disabled={product.stock <= 0}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition-all shadow-md shadow-indigo-100 hover:shadow-indigo-200"
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition-all shadow-md shadow-indigo-100"
                   >
                     Add to Cart
                   </button>
@@ -256,21 +430,6 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Secure Customer Email Input */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Customer Email (Required for Checkout)
-                  </label>
-                  <input
-                    type="email"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    placeholder="name@email.com"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                    required
-                  />
-                </div>
-
                 <div className="pt-4 border-t border-slate-100 space-y-4">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-semibold text-slate-500">
@@ -286,7 +445,7 @@ export default function App() {
                     className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-indigo-100"
                   >
                     {loading
-                      ? "Initializing Secure Payment..."
+                      ? "Processing Secure Payment..."
                       : "Proceed to Secure Payment"}
                   </button>
                 </div>
@@ -299,7 +458,6 @@ export default function App() {
       {/* Footer Track Section: Live Order Status Tracker */}
       <footer className="bg-white border-t border-slate-200 mt-12 py-12">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Left Side: Instructions */}
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-slate-800">
               Verify Eventual Consistency
@@ -314,7 +472,6 @@ export default function App() {
             </p>
           </div>
 
-          {/* Right Side: Order Status Form Tracker */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 space-y-4">
             <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
               Live Order Status Tracker
@@ -351,9 +508,9 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                   <div>
-                    Email:{" "}
+                    User ID:{" "}
                     <span className="font-semibold text-slate-700">
-                      {queriedOrder.customer_email}
+                      {queriedOrder.user_id}
                     </span>
                   </div>
                   <div>
