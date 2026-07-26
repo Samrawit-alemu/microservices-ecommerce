@@ -24,8 +24,12 @@ export default function App() {
   const [queriedOrder, setQueriedOrder] = useState(null);
   const [queryError, setQueryError] = useState("");
 
-  const PRODUCT_API = "https://product-service-y2y8.onrender.com/products"; // Replace with your live product-service URL
-  const ORDER_API = "https://order-service-3i4u.onrender.com/orders"; // Replace with your live order-service URL
+  const PRODUCT_API =
+    import.meta.env.VITE_PRODUCT_API_URL ||
+    "https://product-service-y2y8.onrender.com/products";
+  const ORDER_API =
+    import.meta.env.VITE_ORDER_API_URL ||
+    "https://order-service-3i4u.onrender.com/orders";
 
   // --- 2. FETCH PRODUCT CATALOG ON LOAD ---
   useEffect(() => {
@@ -163,10 +167,15 @@ export default function App() {
         setCart([]);
         window.open(data.payment_url, "_blank");
       } else {
-        const errData = await res.json();
-        alert(
-          `Checkout Failed: ${errData.detail || "Unauthorized. Please log in again."}`,
-        );
+        // Server errors return plain text rather than JSON, so read the body defensively
+        const raw = await res.text();
+        let detail = raw;
+        try {
+          detail = JSON.parse(raw).detail || raw;
+        } catch {
+          /* body was not JSON */
+        }
+        alert(`Checkout Failed (${res.status}): ${detail || "Unknown error"}`);
         if (res.status === 401) handleLogout();
       }
     } catch (err) {
