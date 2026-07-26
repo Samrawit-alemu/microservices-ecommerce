@@ -6,7 +6,8 @@ import json
 
 class RabbitMQPublisher:
     def __init__(self):
-        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672//")
+        # A trailing "//" parses to an empty vhost, which the broker rejects; %2F is the default "/" vhost
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/%2F")
         self.exchange_name = "order_exchange"
 
     def publish_event(self, routing_key: str, message: dict):

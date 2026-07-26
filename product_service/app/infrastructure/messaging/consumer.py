@@ -3,16 +3,18 @@ import os  # Added import
 import pika
 import json
 import asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.future import select
+from sqlalchemy.pool import NullPool
 
-from app.infrastructure.db.config import async_session
+from app.infrastructure.db.config import DATABASE_URL
 from app.infrastructure.db.models import ProductDB
 
 class RabbitMQConsumer:
     def __init__(self):
-        # 1. Load CloudAMQP URL from environment variable, fallback to local IPv4
-        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672//")
+        # 1. Load CloudAMQP URL from environment variable, fallback to local IPv4.
+        # A trailing "//" parses to an empty vhost, which the broker rejects; %2F is the default "/" vhost
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/%2F")
         self.exchange_name = "order_exchange"
         self.queue_name = "product_inventory_queue"
 
@@ -53,7 +55,15 @@ class RabbitMQConsumer:
             await self.update_inventory(event_data, decrement=False)
 
     async def update_inventory(self, event_data: dict, decrement: bool):
-        async with async_session() as session:
+        # This runs on a throwaway event loop in the consumer thread, so it cannot reuse
+        # the app's pooled connections; those are bound to the main loop and error out
+        # with "another command is already in progress" when shared across loops.
+        engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+        session_factory = async_sessionmaker(
+            bind=engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        async with session_factory() as session:
             try:
                 for item in event_data.get("items", []):
                     product_id = item["product_id"]
@@ -76,3 +86,5 @@ class RabbitMQConsumer:
             except Exception as e:
                 await session.rollback()
                 print(f"[!] Failed to update inventory: {str(e)}")
+            finally:
+                await engine.dispose()
