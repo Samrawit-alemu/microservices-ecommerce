@@ -13,3 +13,19 @@ class RabbitMQPublisher:
         parameters = pika.URLParameters(self.rabbitmq_url)
         connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
+
+        # Declaration must match the product service consumer, which binds this exchange
+        channel.exchange_declare(
+            exchange=self.exchange_name,
+            exchange_type="direct",
+            durable=True
+        )
+
+        channel.basic_publish(
+            exchange=self.exchange_name,
+            routing_key=routing_key,
+            body=json.dumps(message),
+            properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent)
+        )
+
+        connection.close()
