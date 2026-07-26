@@ -359,39 +359,55 @@ export default function App() {
             {products.map((product) => (
               <div
                 key={product.id}
-                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col justify-between group"
+                className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col overflow-hidden group"
               >
-                <div>
-                  <div className="flex justify-between items-start mb-3">
-                    <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg">
-                      ID: {product.id}
-                    </span>
-                    <span
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${product.stock > 0 ? "bg-indigo-50 text-indigo-700" : "bg-red-50 text-red-700"}`}
-                    >
-                      {product.stock > 0
-                        ? `${product.stock} In Stock`
-                        : "Out of Stock"}
-                    </span>
-                  </div>
-                  <h3 className="font-bold text-slate-800 text-lg mb-1 group-hover:text-indigo-600 transition-colors">
-                    {product.name}
-                  </h3>
-                  <p className="text-slate-500 text-sm mb-4 leading-relaxed">
-                    {product.description}
-                  </p>
+                <div className="aspect-[4/3] bg-slate-100 overflow-hidden">
+                  {product.image_url ? (
+                    <img
+                      src={product.image_url}
+                      alt={product.name}
+                      loading="lazy"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-4xl font-black text-slate-300">
+                      {product.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                 </div>
-                <div className="flex justify-between items-center pt-4 border-t border-slate-100">
-                  <span className="text-xl font-black text-slate-900">
-                    ${product.price}
-                  </span>
-                  <button
-                    onClick={() => addToCart(product)}
-                    disabled={product.stock <= 0}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition-all shadow-md shadow-indigo-100"
-                  >
-                    Add to Cart
-                  </button>
+                <div className="p-5 flex flex-col flex-1 justify-between">
+                  <div>
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg">
+                        ID: {product.id}
+                      </span>
+                      <span
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${product.stock > 0 ? "bg-indigo-50 text-indigo-700" : "bg-red-50 text-red-700"}`}
+                      >
+                        {product.stock > 0
+                          ? `${product.stock} In Stock`
+                          : "Out of Stock"}
+                      </span>
+                    </div>
+                    <h3 className="font-bold text-slate-800 text-lg mb-1 group-hover:text-indigo-600 transition-colors">
+                      {product.name}
+                    </h3>
+                    <p className="text-slate-500 text-sm mb-4 leading-relaxed">
+                      {product.description}
+                    </p>
+                  </div>
+                  <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+                    <span className="text-xl font-black text-slate-900">
+                      ${product.price}
+                    </span>
+                    <button
+                      onClick={() => addToCart(product)}
+                      disabled={product.stock <= 0}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition-all shadow-md shadow-indigo-100"
+                    >
+                      Add to Cart
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -420,13 +436,22 @@ export default function App() {
                       key={item.id}
                       className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100"
                     >
-                      <div>
-                        <h4 className="font-semibold text-slate-800 text-sm">
-                          {item.name}
-                        </h4>
-                        <span className="text-xs text-slate-500">
-                          ${item.price} × {item.quantity}
-                        </span>
+                      <div className="flex items-center gap-3 min-w-0">
+                        {item.image_url && (
+                          <img
+                            src={item.image_url}
+                            alt=""
+                            className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0"
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <h4 className="font-semibold text-slate-800 text-sm truncate">
+                            {item.name}
+                          </h4>
+                          <span className="text-xs text-slate-500">
+                            ${item.price} × {item.quantity}
+                          </span>
+                        </div>
                       </div>
                       <button
                         type="button"
