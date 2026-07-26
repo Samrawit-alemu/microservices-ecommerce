@@ -22,7 +22,8 @@ class ProductRepository:
             name=product.name,
             description=product.description,
             price=product.price,
-            stock=product.stock
+            stock=product.stock,
+            image_url=product.image_url
         )
         self.db_session.add(db_product)
         # Flush sends the insert SQL query to the DB immediately
