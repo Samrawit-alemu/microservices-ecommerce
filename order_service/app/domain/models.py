@@ -17,7 +17,7 @@ class OrderCreate(BaseModel):
 
 class Order(BaseModel):
     id: Optional[int] = None
-    customer_email: str
+    user_id: Optional[int] = None
     total_amount: Decimal
     status: str  # 'PENDING', 'PAID', 'FAILED'
     tx_ref: str  # Unique transaction reference for Chapa
