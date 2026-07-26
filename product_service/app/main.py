@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from app.infrastructure.db.config import engine, Base
 from app.infrastructure.api.routes import router as product_router
+from app.infrastructure.db.seed import ensure_schema, seed_catalog
 from app.infrastructure.messaging.consumer import RabbitMQConsumer
 
 def start_rabbitmq_consumer():
@@ -32,6 +33,8 @@ def start_rabbitmq_consumer():
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await ensure_schema(conn)
+    await seed_catalog()
     consumer_thread = threading.Thread(target=start_rabbitmq_consumer, daemon=True)
     consumer_thread.start()
     yield
