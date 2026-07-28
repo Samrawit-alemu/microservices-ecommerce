@@ -24,6 +24,11 @@ export default function App() {
   const [queriedOrder, setQueriedOrder] = useState(null);
   const [queryError, setQueryError] = useState("");
 
+  // Auth-scoped order history ("My Orders")
+  const [myOrders, setMyOrders] = useState([]);
+  const [myOrdersLoading, setMyOrdersLoading] = useState(false);
+  const [myOrdersError, setMyOrdersError] = useState("");
+
   const PRODUCT_API =
     import.meta.env.VITE_PRODUCT_API_URL ||
     "https://product-service-y2y8.onrender.com/products";
@@ -31,10 +36,11 @@ export default function App() {
     import.meta.env.VITE_ORDER_API_URL ||
     "https://order-service-3i4u.onrender.com/orders";
 
-  // --- 2. FETCH PRODUCT CATALOG ON LOAD ---
+  // --- 2. FETCH PRODUCT CATALOG + MY ORDERS ON LOAD ---
   useEffect(() => {
     if (token) {
       fetchProducts();
+      fetchMyOrders();
     }
   }, [token]);
 
@@ -47,6 +53,34 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to fetch products:", err);
+    }
+  };
+
+  const fetchMyOrders = async () => {
+    setMyOrdersLoading(true);
+    setMyOrdersError("");
+    try {
+      const res = await fetch(`${ORDER_API}/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMyOrders(data);
+      } else {
+        const raw = await res.text();
+        let detail = raw;
+        try {
+          detail = JSON.parse(raw).detail || raw;
+        } catch {
+          /* body was not JSON */
+        }
+        setMyOrdersError(detail || "Failed to load your orders.");
+        if (res.status === 401) handleLogout();
+      }
+    } catch (err) {
+      setMyOrdersError("Failed to load your orders. Verify the Order Service is running.");
+    } finally {
+      setMyOrdersLoading(false);
     }
   };
 
@@ -107,6 +141,8 @@ export default function App() {
     setCart([]);
     setProducts([]);
     setQueriedOrder(null);
+    setMyOrders([]);
+    setMyOrdersError("");
   };
 
   // --- 4. INTERACTIVE CART OPERATIONS ---
@@ -165,6 +201,7 @@ export default function App() {
         const data = await res.json();
         setOrderResponse(data);
         setCart([]);
+        fetchMyOrders();
         window.open(data.payment_url, "_blank");
       } else {
         // Server errors return plain text rather than JSON, so read the body defensively
@@ -489,79 +526,159 @@ export default function App() {
         </div>
       </main>
 
-      {/* Footer Track Section: Live Order Status Tracker */}
+      {/* My Orders + Live Order Status Tracker */}
       <footer className="bg-white border-t border-slate-200 mt-12 py-12">
-        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold text-slate-800">
-              Verify Eventual Consistency
-            </h3>
-            <p className="text-sm text-slate-500 leading-relaxed">
-              When you click "Checkout", our Order Service saves your order as{" "}
-              <span className="font-semibold text-amber-600">PENDING</span> and
-              opens your payment link in a new tab. Once you click "Success" on
-              the mock payment page, our webhook triggers RabbitMQ to reduce
-              stock. Use this tool to track the transaction state transition in
-              real-time.
-            </p>
-          </div>
-
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 space-y-4">
-            <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
-              Live Order Status Tracker
-            </h4>
-            <form onSubmit={handleQueryOrder} className="flex gap-2">
-              <input
-                type="number"
-                placeholder="Enter Order ID (e.g. 4)"
-                value={queryOrderId}
-                onChange={(e) => setQueryOrderId(e.target.value)}
-                className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-              />
+        <div className="max-w-7xl mx-auto px-6 space-y-10">
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">My Orders</h3>
+                <p className="text-sm text-slate-500">
+                  JWT-scoped history for {currentUserEmail}. Refresh after
+                  payment to see PENDING → PAID.
+                </p>
+              </div>
               <button
-                type="submit"
-                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-xl transition-all"
+                type="button"
+                onClick={fetchMyOrders}
+                disabled={myOrdersLoading}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 text-xs font-bold rounded-xl transition-all"
               >
-                Track Order
+                {myOrdersLoading ? "Refreshing..." : "Refresh Orders"}
               </button>
-            </form>
+            </div>
 
-            {queryError && (
+            {myOrdersError && (
               <p className="text-sm text-rose-500 font-semibold">
-                {queryError}
+                {myOrdersError}
               </p>
             )}
 
-            {queriedOrder && (
-              <div className="bg-white border border-slate-100 rounded-xl p-4 space-y-3 shadow-sm">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-bold text-slate-800">
-                    Order ID: {queriedOrder.id}
-                  </span>
-                  {getStatusBadge(queriedOrder.status)}
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
-                  <div>
-                    User ID:{" "}
-                    <span className="font-semibold text-slate-700">
-                      {queriedOrder.user_id}
-                    </span>
+            {myOrdersLoading && myOrders.length === 0 ? (
+              <p className="text-sm text-slate-400">Loading your orders...</p>
+            ) : myOrders.length === 0 ? (
+              <p className="text-sm text-slate-400">
+                No orders yet. Complete a checkout to see history here.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {myOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3"
+                  >
+                    <div className="flex justify-between items-center gap-3">
+                      <span className="text-sm font-bold text-slate-800">
+                        Order #{order.id}
+                      </span>
+                      {getStatusBadge(order.status)}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                      <div>
+                        Total:{" "}
+                        <span className="font-semibold text-slate-700">
+                          ${order.total_amount}
+                        </span>
+                      </div>
+                      <div>
+                        Items:{" "}
+                        <span className="font-semibold text-slate-700">
+                          {order.items?.length || 0}
+                        </span>
+                      </div>
+                      <div className="col-span-2">
+                        Ref:{" "}
+                        <span className="font-mono text-slate-600">
+                          {order.tx_ref}
+                        </span>
+                      </div>
+                      {order.created_at && (
+                        <div className="col-span-2">
+                          Placed:{" "}
+                          <span className="font-semibold text-slate-700">
+                            {new Date(order.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    Total Amount:{" "}
-                    <span className="font-semibold text-slate-700">
-                      ${queriedOrder.total_amount}
-                    </span>
-                  </div>
-                  <div className="col-span-2">
-                    Ref:{" "}
-                    <span className="font-mono text-slate-600">
-                      {queriedOrder.tx_ref}
-                    </span>
-                  </div>
-                </div>
+                ))}
               </div>
             )}
+          </section>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-4">
+              <h3 className="text-lg font-bold text-slate-800">
+                Verify Eventual Consistency
+              </h3>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                When you click "Checkout", our Order Service saves your order as{" "}
+                <span className="font-semibold text-amber-600">PENDING</span> and
+                opens your payment link in a new tab. Once you click "Success" on
+                the mock payment page, our webhook triggers RabbitMQ to reduce
+                stock. Use this tool to track the transaction state transition in
+                real-time.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 space-y-4">
+              <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+                Live Order Status Tracker
+              </h4>
+              <form onSubmit={handleQueryOrder} className="flex gap-2">
+                <input
+                  type="number"
+                  placeholder="Enter Order ID (e.g. 4)"
+                  value={queryOrderId}
+                  onChange={(e) => setQueryOrderId(e.target.value)}
+                  className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold rounded-xl transition-all"
+                >
+                  Track Order
+                </button>
+              </form>
+
+              {queryError && (
+                <p className="text-sm text-rose-500 font-semibold">
+                  {queryError}
+                </p>
+              )}
+
+              {queriedOrder && (
+                <div className="bg-white border border-slate-100 rounded-xl p-4 space-y-3 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-bold text-slate-800">
+                      Order ID: {queriedOrder.id}
+                    </span>
+                    {getStatusBadge(queriedOrder.status)}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                    <div>
+                      User ID:{" "}
+                      <span className="font-semibold text-slate-700">
+                        {queriedOrder.user_id}
+                      </span>
+                    </div>
+                    <div>
+                      Total Amount:{" "}
+                      <span className="font-semibold text-slate-700">
+                        ${queriedOrder.total_amount}
+                      </span>
+                    </div>
+                    <div className="col-span-2">
+                      Ref:{" "}
+                      <span className="font-mono text-slate-600">
+                        {queriedOrder.tx_ref}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </footer>

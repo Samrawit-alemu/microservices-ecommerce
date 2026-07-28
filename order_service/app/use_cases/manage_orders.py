@@ -98,3 +98,7 @@ class OrderUseCases:
         if not order:
             raise ValueError(f"Order with ID {order_id} not found")
         return order
+
+    async def list_orders_for_user(self, user_id: int) -> List[OrderDB]:
+        """Return order history scoped to the authenticated user."""
+        return await self.order_repo.get_by_user_id(user_id)

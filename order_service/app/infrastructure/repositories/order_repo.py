@@ -53,6 +53,17 @@ class OrderRepository:
         result = await self.db_session.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_by_user_id(self, user_id: int) -> List[OrderDB]:
+        """Return the authenticated user's orders, newest first."""
+        query = (
+            select(OrderDB)
+            .options(selectinload(OrderDB.items))
+            .where(OrderDB.user_id == user_id)
+            .order_by(OrderDB.created_at.desc())
+        )
+        result = await self.db_session.execute(query)
+        return list(result.scalars().all())
+
     async def update_status(self, order_id: int, status: str) -> OrderDB:
         query = select(OrderDB).where(OrderDB.id == order_id)
         result = await self.db_session.execute(query)

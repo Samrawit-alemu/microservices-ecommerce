@@ -161,6 +161,18 @@ async def mock_payment_success(request: Request, tx_ref: str):
     return "<h3>Error executing mock payment webhook redirect</h3>"
 
 
+# Registered before /{order_id} so "me" is not parsed as an integer path param
+@router.get("/me", response_model=List[OrderDomain])
+async def list_my_orders(
+    current_user: UserDB = Depends(get_current_user),
+    use_cases: OrderUseCases = Depends(get_order_use_cases),
+):
+    """
+    Returns the authenticated user's order history (JWT-scoped).
+    """
+    return await use_cases.list_orders_for_user(int(current_user.id))  # type: ignore
+
+
 @router.get("/{order_id}", response_model=OrderDomain)
 async def get_order(
     order_id: int,
