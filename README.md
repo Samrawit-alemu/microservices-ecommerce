@@ -1,109 +1,158 @@
 # Asynchronous Event-Driven Microservices E-Commerce Platform
 
-A production-ready e-commerce checkout engine designed using **Clean Architecture** and **Event-Driven Architecture (EDA)**. This system demonstrates eventual consistency, asynchronous messaging, distributed transactions, and secure third-party payment integrations.
+A portfolio e-commerce checkout engine built with **Clean Architecture** and **Event-Driven Architecture (EDA)**. It demonstrates eventual consistency over RabbitMQ, JWT-protected checkout, Chapa-style payment webhooks, and a React storefront deployed on Render free tier.
 
 ---
 
-## 🏗 System Architecture Diagram
+## Live demo
 
-The system is designed with a **Database-per-Service** pattern to ensure independent deployability and tight service boundaries. Inter-service communication is split into synchronous REST calls (for pricing and stock validation) and asynchronous messaging (for transactional operations).
+| Surface | URL |
+| --- | --- |
+| Storefront | https://sam-store.onrender.com/ |
+| Product Service | https://product-service-y2y8.onrender.com/products |
+| Order Service | https://order-service-3i4u.onrender.com/orders |
+
+> **Free-tier note:** Render services sleep when idle. The first catalog request after a cold start can take up to ~60s; the UI shows skeletons and a wake banner while that happens.
+
+---
+
+## System architecture
+
+Database-per-service with sync REST for catalog/pricing and async messaging for post-payment stock updates:
 
 ```text
-       [ React Frontend: Port 5173 ]
+       [ React Frontend: Vite / Render ]
          │                     │
-         │ (HTTP REST)         │ (HTTP REST)
+         │ (HTTP REST)         │ (HTTP REST + JWT)
          ▼                     ▼
-[ Product Service: Port 8001 ] <───(HTTP Sync Validation)─── [ Order Service: Port 8002 ]
-   │                                                             │
-   ├── (Async PostgreSQL)                                        ├── (Async PostgreSQL)
-   │     └── [ product_db ]                                      │     └── [ order_db ]
-   │                                                             │
-   │ (Consume event: order.paid / order.failed)                  ├── (Publish event: order.paid)
-   ▲                                                             │
-   └─── [ RabbitMQ Broker: Port 5672 ] <─────────────────────────┘
-                                                                 │
-                                                                 └─── (HTTP Webhook) <── [ Chapa Payments ]
+[ Product Service: :8001 ] <───(HTTP stock/price)─── [ Order Service: :8002 ]
+   │                                                      │
+   ├── PostgreSQL (product_db)                            ├── PostgreSQL (order_db)
+   │                                                      │
+   │ Consume: order.paid / order.failed                   ├── Publish: order.paid
+   ▲                                                      │
+   └─── [ RabbitMQ / CloudAMQP ] <────────────────────────┘
+                                                          │
+                                                          └── Webhook <── Chapa (mock)
 ```
 
----
+### Design decisions
 
-## 🚀 Key Architectural Patterns Implemented
-
-### 1. Clean Architecture (Onion/Hexagonal)
-
-Each microservice is decoupled into strict layers:
-
-- **Domain:** Contains pure business rules and data validation schemas (Pydantic) with zero framework or database dependencies.
-- **Use Cases (Application):** Orchestrates domain schemas and database gateways to execute core business workflows.
-- **Infrastructure:** Adapters handling framework details—FastAPI routers, database models (SQLAlchemy), repositories, and external HTTP clients.
-
-### 2. Eventual Consistency & EDA (RabbitMQ)
-
-To prevent network bottlenecks and single points of failure, the Order Service does not modify the Product database directly. When Chapa confirms a payment, the Order Service updates its status to `PAID` and publishes an asynchronous event (`order.paid`) to **RabbitMQ**. A background consumer running in the Product Service intercepts this event and decrements the stock in its database.
-
-### 3. Saga Pattern (Compensating Transactions)
-
-To maintain data integrity during payment failures (e.g., if a user cancels their Chapa checkout), the system executes a Saga compensating transaction. The Order Service publishes an `order.failed` event, and the Product Service automatically restores (increments) the locked inventory stock.
-
-### 4. Concurrency & Threading
-
-FastAPI runs on an asynchronous event loop. Because RabbitMQ's message listener is an infinite blocking process, the background consumer is safely isolated inside a **Daemon Thread**, preventing CPU blockages and ensuring clean OS resource management.
+1. **Clean Architecture** — Domain schemas stay free of FastAPI/SQLAlchemy; use cases orchestrate repositories and clients; infrastructure owns routers, ORM models, and brokers.
+2. **Eventual consistency** — Order Service never writes Product stock. On payment success it marks the order `PAID` and publishes `order.paid`; Product Service consumes and decrements inventory asynchronously.
+3. **Webhook idempotency** — Replaying the same `tx_ref` after an order is already `PAID` returns success without republishing RabbitMQ events (prevents double stock decrement).
+4. **JWT-scoped history** — Checkout and `GET /orders/me` require a Bearer token; public `GET /orders/{id}` remains available for the eventual-consistency demo tracker.
+5. **Saga-style compensation** — Payment failure can publish `order.failed` so Product Service restores reserved stock (when that path is exercised).
 
 ---
 
-## 🛠 Tech Stack
+## Tech stack
 
-- **Backend Framework:** FastAPI (Python 3.13)
-- **Database:** PostgreSQL (Relational)
-- **ORM:** SQLAlchemy 2.0 (Asynchronous)
-- **Database Driver:** Psycopg 3 (Binary-packaged)
-- **Message Broker:** RabbitMQ (AMQP 3-management)
-- **Payment Gateway:** Chapa API (Interactive Mock Webhooks)
-- **Frontend:** React (Vite, Tailwind CSS v4.0)
-- **Infrastructure & DevOps:** Docker, Docker Compose
-- **Testing & CI/CD:** Pytest, GitHub Actions (Automated Workflows)
+- **Backend:** FastAPI (Python 3.13), SQLAlchemy 2.0 async, Psycopg 3
+- **Messaging:** RabbitMQ (local Docker) / CloudAMQP (Render)
+- **Payments:** Chapa API with interactive mock webhook redirect
+- **Frontend:** React (Vite) + Tailwind CSS
+- **Infra:** Docker Compose (local DB + broker), Render (deploy), GitHub Actions (CI)
 
 ---
 
-## 💻 Quick Start & Running Locally
+## Demo script (eventual consistency)
+
+Use this path when walking recruiters or reviewers through the live system:
+
+1. Open the [storefront](https://sam-store.onrender.com/) and register / sign in (JWT issued by Order Service).
+2. Wait for the catalog if services are cold — skeletons + “waking free-tier” message are expected.
+3. Add items to the cart and **Proceed to Secure Payment**. A new tab opens the mock Chapa success page.
+4. Confirm payment in the mock tab. Order Service sets status `PAID` and publishes `order.paid`.
+5. Refresh **My Orders** (or use the Live Order Status Tracker with the new order ID) — status should move `PENDING` → `PAID`.
+6. Refresh the catalog — stock for purchased products should drop shortly after the consumer processes the event.
+7. Optionally replay the webhook with the same `tx_ref`; stock must **not** decrement again (idempotency).
+
+---
+
+## Quick start (local)
 
 ### Prerequisites
 
-- Docker Desktop running on Windows/macOS/Linux
-- Node.js (v18 or greater)
+- Docker Desktop
+- Node.js 18+
 - Python 3.13
 
-### 1. Start the Infrastructure (Databases & Message Broker)
-
-From the root directory, spin up PostgreSQL and RabbitMQ inside Docker:
+### 1. Infrastructure
 
 ```bash
 docker compose up -d
 ```
 
-- Verify the RabbitMQ Management Dashboard is active at: `http://localhost:15672` (guest / guest).
-- Create your PostgreSQL databases (`product_db` and `order_db`) on port `5433` (or your mapped local port).
+- RabbitMQ management UI: http://localhost:15672 (`guest` / `guest`)
+- Create Postgres databases `product_db` and `order_db` on the mapped port (default `5433`)
 
-### 2. Start the Product Service
+### 2. Product Service
 
 ```bash
 cd product_service
-# Activate your virtual environment and run:
+# activate venv, then:
 uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### 3. Start the Order Service
+### 3. Order Service
 
 ```bash
 cd order_service
-# Activate your virtual environment and run:
 uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload
 ```
 
-### 4. Start the Frontend
+### 4. Frontend
 
 ```bash
 cd frontend
 npm install
 npm run dev
+```
+
+Optional env overrides (otherwise production Render URLs are used as fallbacks):
+
+```bash
+# frontend/.env.local
+VITE_PRODUCT_API_URL=http://127.0.0.1:8001/products
+VITE_ORDER_API_URL=http://127.0.0.1:8002/orders
+```
+
+---
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on pushes/PRs to `main`:
+
+- `test-product-service` — install `product_service/requirements.txt`, `pytest product_service/`
+- `test-order-service` — install `order_service/requirements.txt`, `pytest order_service/` (includes webhook idempotency unit tests)
+
+```bash
+PYTHONPATH=product_service pytest product_service/
+PYTHONPATH=order_service pytest order_service/
+```
+
+---
+
+## Key API surfaces
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/orders/auth/register` | — | Create account |
+| `POST` | `/orders/auth/login` | — | Issue JWT |
+| `POST` | `/orders/` | JWT | Create order + payment URL |
+| `GET` | `/orders/me` | JWT | Current user's order history |
+| `GET` | `/orders/{order_id}` | — | Lookup by id (demo tracker) |
+| `POST` | `/orders/webhook/chapa` | — | Confirm payment (`tx_ref`, `status: success`) |
+| `GET` | `/products` | — | Catalog |
+
+---
+
+## Project layout
+
+```text
+product_service/   # Catalog, stock, RabbitMQ consumer
+order_service/     # Auth, checkout, webhook, RabbitMQ publisher
+frontend/          # Vite React storefront (App.jsx)
+.github/workflows/ # CI for both Python services
 ```
