@@ -1,5 +1,5 @@
 // frontend/src/App.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export default function App() {
   // --- 1. STATE MANAGEMENT ---
@@ -7,6 +7,12 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(false);
   const [orderResponse, setOrderResponse] = useState(null);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState("");
+  const [coldStartNotice, setColdStartNotice] = useState(false);
+  const [toast, setToast] = useState(null); // { type: 'success'|'error'|'info', message }
+  const toastTimerRef = useRef(null);
+  const coldStartTimerRef = useRef(null);
 
   // Authentication State
   const [token, setToken] = useState(localStorage.getItem("token") || "");
@@ -36,23 +42,54 @@ export default function App() {
     import.meta.env.VITE_ORDER_API_URL ||
     "https://order-service-3i4u.onrender.com/orders";
 
+  const showToast = (message, type = "info") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4200);
+  };
+
   // --- 2. FETCH PRODUCT CATALOG + MY ORDERS ON LOAD ---
   useEffect(() => {
     if (token) {
       fetchProducts();
       fetchMyOrders();
     }
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (coldStartTimerRef.current) clearTimeout(coldStartTimerRef.current);
+    };
   }, [token]);
 
   const fetchProducts = async () => {
+    setProductsLoading(true);
+    setProductsError("");
+    setColdStartNotice(false);
+    if (coldStartTimerRef.current) clearTimeout(coldStartTimerRef.current);
+    // Free-tier Render services sleep; be honest after a short wait
+    coldStartTimerRef.current = setTimeout(() => {
+      setColdStartNotice(true);
+    }, 2500);
+
     try {
       const res = await fetch(PRODUCT_API);
       if (res.ok) {
         const data = await res.json();
         setProducts(data);
+        setProductsError("");
+      } else {
+        setProductsError(`Catalog unavailable (${res.status}). Try again shortly.`);
+        showToast("Could not load products from the Product Service.", "error");
       }
     } catch (err) {
       console.error("Failed to fetch products:", err);
+      setProductsError(
+        "Network error loading products. The free-tier service may still be waking up.",
+      );
+      showToast("Network error loading the product catalog.", "error");
+    } finally {
+      if (coldStartTimerRef.current) clearTimeout(coldStartTimerRef.current);
+      setColdStartNotice(false);
+      setProductsLoading(false);
     }
   };
 
@@ -143,6 +180,9 @@ export default function App() {
     setQueriedOrder(null);
     setMyOrders([]);
     setMyOrdersError("");
+    setProductsError("");
+    setColdStartNotice(false);
+    setProductsLoading(false);
   };
 
   // --- 4. INTERACTIVE CART OPERATIONS ---
@@ -151,7 +191,10 @@ export default function App() {
       const existing = prevCart.find((item) => item.id === product.id);
       if (existing) {
         if (existing.quantity >= product.stock) {
-          alert(`Cannot add more. Only ${product.stock} items left in stock.`);
+          showToast(
+            `Cannot add more. Only ${product.stock} items left in stock.`,
+            "error",
+          );
           return prevCart;
         }
         return prevCart.map((item) =>
@@ -160,6 +203,7 @@ export default function App() {
             : item,
         );
       }
+      showToast(`${product.name} added to cart`, "success");
       return [...prevCart, { ...product, quantity: 1 }];
     });
   };
@@ -202,6 +246,10 @@ export default function App() {
         setOrderResponse(data);
         setCart([]);
         fetchMyOrders();
+        showToast(
+          `Order #${data.order?.id ?? ""} created — complete payment in the new tab.`,
+          "success",
+        );
         window.open(data.payment_url, "_blank");
       } else {
         // Server errors return plain text rather than JSON, so read the body defensively
@@ -212,11 +260,17 @@ export default function App() {
         } catch {
           /* body was not JSON */
         }
-        alert(`Checkout Failed (${res.status}): ${detail || "Unknown error"}`);
+        showToast(
+          `Checkout failed (${res.status}): ${detail || "Unknown error"}`,
+          "error",
+        );
         if (res.status === 401) handleLogout();
       }
     } catch (err) {
-      alert("Network error during checkout. Verify your services are running.");
+      showToast(
+        "Network error during checkout. Verify your services are running.",
+        "error",
+      );
     } finally {
       setLoading(false);
     }
@@ -354,6 +408,21 @@ export default function App() {
   // If the user IS logged in, render the main storefront dashboard
   return (
     <div className="min-h-screen bg-slate-50">
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg border text-sm font-semibold ${
+            toast.type === "error"
+              ? "bg-rose-50 border-rose-200 text-rose-800"
+              : toast.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-slate-50 border-slate-200 text-slate-800"
+          }`}
+          role="status"
+        >
+          {toast.message}
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
@@ -389,11 +458,57 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Product Grid */}
         <div className="lg:col-span-2 space-y-6">
-          <h2 className="text-lg font-bold text-slate-800 tracking-tight">
-            Available Products
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-slate-800 tracking-tight">
+              Available Products
+            </h2>
+            {(productsLoading || productsError) && (
+              <button
+                type="button"
+                onClick={fetchProducts}
+                disabled={productsLoading}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 text-xs font-bold rounded-lg transition-all"
+              >
+                {productsLoading ? "Loading..." : "Retry catalog"}
+              </button>
+            )}
+          </div>
+
+          {coldStartNotice && productsLoading && (
+            <div className="p-4 bg-amber-50 border border-amber-100 text-amber-900 text-sm rounded-xl">
+              Waking free-tier Product Service on Render — first requests can
+              take up to a minute after idle. Catalog will appear when it
+              responds.
+            </div>
+          )}
+
+          {productsError && !productsLoading && (
+            <div className="p-4 bg-rose-50 border border-rose-100 text-rose-700 text-sm rounded-xl font-semibold">
+              {productsError}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {products.map((product) => (
+            {productsLoading && products.length === 0
+              ? [1, 2, 3, 4].map((n) => (
+                  <div
+                    key={`skeleton-${n}`}
+                    className="bg-white border border-slate-200 rounded-2xl overflow-hidden animate-pulse"
+                  >
+                    <div className="aspect-[4/3] bg-slate-200" />
+                    <div className="p-5 space-y-3">
+                      <div className="h-3 w-20 bg-slate-200 rounded" />
+                      <div className="h-5 w-3/4 bg-slate-200 rounded" />
+                      <div className="h-3 w-full bg-slate-100 rounded" />
+                      <div className="h-3 w-2/3 bg-slate-100 rounded" />
+                      <div className="pt-4 flex justify-between">
+                        <div className="h-6 w-16 bg-slate-200 rounded" />
+                        <div className="h-9 w-28 bg-slate-200 rounded-xl" />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              : products.map((product) => (
               <div
                 key={product.id}
                 className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col overflow-hidden group"
@@ -449,6 +564,12 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          {!productsLoading && !productsError && products.length === 0 && (
+            <p className="text-sm text-slate-400">
+              No products returned yet. Use Retry catalog if the service just woke up.
+            </p>
+          )}
         </div>
 
         {/* Right Column: Checkout & Cart */}
