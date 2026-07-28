@@ -431,7 +431,7 @@ export default function App() {
               S
             </div>
             <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-              PortfolioStore
+              SamStore
             </h1>
           </div>
 
