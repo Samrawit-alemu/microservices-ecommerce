@@ -11,3 +11,16 @@ __pycache__/
 # IDE configurations
 .vscode/
 .idea/
+
+# Node dependencies (Frontend)
+node_modules/
+dist/
+.eslintcache
+
+# Vite cache
+.vite/
+
+# Local environment overrides (.env.example stays tracked)
+.env
+.env.local
+.env.*.local

@@ -13,5 +13,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+
+
+ # Add RabbitMQ Service
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq_container
+    ports:
+      - "5672:5672"   # RabbitMQ default message port
+      - "15672:15672" # RabbitMQ management UI port
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
 volumes:
   postgres_data:
+  rabbitmq_data:
+

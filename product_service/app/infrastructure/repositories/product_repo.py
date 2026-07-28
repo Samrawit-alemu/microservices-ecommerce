@@ -22,7 +22,8 @@ class ProductRepository:
             name=product.name,
             description=product.description,
             price=product.price,
-            stock=product.stock
+            stock=product.stock,
+            image_url=product.image_url
         )
         self.db_session.add(db_product)
         # Flush sends the insert SQL query to the DB immediately
@@ -42,6 +43,8 @@ class ProductRepository:
         """
         Queries PostgreSQL for a list of all products in the catalog.
         """
-        query = select(ProductDB)
+        # Without an explicit order, Postgres returns heap order, which reshuffles
+        # the storefront grid whenever a row is updated by a stock decrement.
+        query = select(ProductDB).order_by(ProductDB.id)
         result = await self.db_session.execute(query)
         return list(result.scalars().all())
