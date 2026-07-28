@@ -130,8 +130,13 @@ async def chapa_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload")
 
     try:
-        await use_cases.confirm_payment(tx_ref)
-        return {"status": "success", "message": "payment confirmed and stock decrement event published"}
+        order = await use_cases.confirm_payment(tx_ref)
+        return {
+            "status": "success",
+            "message": "payment confirmed and stock decrement event published",
+            "order_id": int(order.id),  # type: ignore
+            "order_status": str(order.status),
+        }
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 

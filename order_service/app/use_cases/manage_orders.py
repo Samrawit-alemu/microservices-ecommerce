@@ -77,6 +77,12 @@ class OrderUseCases:
         if not order:
             raise ValueError(f"Order with reference {tx_ref} not found")
 
+        # Idempotent webhook: already-PAID orders must not republish order.paid
+        # (replaying the same tx_ref would otherwise double-decrement stock).
+        if str(order.status) == "PAID":
+            print(f"[.] Payment already confirmed for tx: {tx_ref}; skipping republish")
+            return order
+
         updated_order = await self.order_repo.update_status(int(order.id), "PAID") # type: ignore
 
         event_payload = {
